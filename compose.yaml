@@ -1,0 +1,17 @@
+services:
+  flux:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file: .env
+    environment:
+      HF_HOME: /data/huggingface
+    volumes:
+      - hf-cache:/data/huggingface
+    gpus: all
+    shm_size: "2gb"
+    restart: unless-stopped
+    stop_grace_period: 5m
+
+volumes:
+  hf-cache:
