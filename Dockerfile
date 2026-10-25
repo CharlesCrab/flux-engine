@@ -2,7 +2,8 @@ FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    HF_HOME=/data/huggingface
+    HF_HOME=/data/huggingface \
+    FLUX_TASK_DATA_DIR=/data/tasks
 WORKDIR /app
 COPY pyproject.toml ./
 COPY flux_engine ./flux_engine

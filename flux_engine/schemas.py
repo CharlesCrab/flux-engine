@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -33,3 +34,24 @@ class GenerateResponse(BaseModel):
     elapsed_seconds: float
     mime_type: Literal["image/png"] = "image/png"
     image_base64: str
+
+
+class TaskError(BaseModel):
+    """可公开的任务错误，不包含请求正文或内部异常。"""
+
+    code: str
+    message: str
+
+
+class TaskResponse(BaseModel):
+    """异步任务投影；图片通过独立结果接口获取。"""
+
+    id: str
+    status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
+    model: str
+    seed: int
+    created_at: datetime
+    updated_at: datetime
+    expires_at: datetime | None
+    error: TaskError | None = None
+    result_url: str | None = None

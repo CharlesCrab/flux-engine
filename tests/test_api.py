@@ -37,9 +37,9 @@ class FakeEngine:
 
 
 @pytest.fixture
-def service():
+def service(tmp_path):
     engine = FakeEngine()
-    settings = Settings(_env_file=None, api_key="test-secret")
+    settings = Settings(_env_file=None, api_key="test-secret", task_data_dir=tmp_path)
     with TestClient(create_app(settings, engine)) as client:
         yield client, engine
     assert not engine.loaded
@@ -112,8 +112,10 @@ def test_invalid_input_never_reaches_model(service, override):
 
 
 @pytest.mark.parametrize("chunked", [False, True])
-def test_body_limit(chunked):
-    app = create_app(Settings(_env_file=None, max_body_bytes=1024), FakeEngine())
+def test_body_limit(chunked, tmp_path):
+    app = create_app(
+        Settings(_env_file=None, max_body_bytes=1024, task_data_dir=tmp_path), FakeEngine()
+    )
     with TestClient(app) as client:
         body = b'{"prompt":"' + b"x" * 2000 + b'"}'
         content = iter([body[:500], body[500:]]) if chunked else body
@@ -155,8 +157,9 @@ def test_failure_releases_gpu_and_hides_internal_errors(service, error, status):
     assert generate(client).status_code == 200
 
 
-def test_model_not_ready():
-    with TestClient(create_app(Settings(_env_file=None), FakeEngine())) as client:
+def test_model_not_ready(tmp_path):
+    settings = Settings(_env_file=None, task_data_dir=tmp_path)
+    with TestClient(create_app(settings, FakeEngine())) as client:
         client.app.state.ready = False
         assert client.get("/health/ready").status_code == 503
         assert generate(client).status_code == 503

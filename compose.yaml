@@ -6,8 +6,10 @@ services:
     env_file: .env
     environment:
       HF_HOME: /data/huggingface
+      FLUX_TASK_DATA_DIR: /data/tasks
     volumes:
       - hf-cache:/data/huggingface
+      - flux-tasks:/data/tasks
     gpus: all
     shm_size: "2gb"
     restart: unless-stopped
@@ -15,3 +17,4 @@ services:
 
 volumes:
   hf-cache:
+  flux-tasks:
