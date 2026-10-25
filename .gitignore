@@ -9,5 +9,6 @@ dist/
 .env
 models/
 outputs/
+var/
 .DS_Store
 .idea/

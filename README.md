@@ -91,7 +91,57 @@ Path("edited.png").write_bytes(base64.b64decode(response.json()["image_base64"])
 | 503 | 模型未就绪或显存不足 |
 | 500 | 推理失败，具体原因查看服务日志 |
 
-推理在线程池执行，健康接口可在推理时响应。GPU 使用非阻塞锁保护，不创建任务队列；客户端断开不会取消正在执行的 CUDA 推理，后续请求仍会收到 429，直到该次推理结束。
+推理在线程执行，健康接口可在推理时响应。同步请求与异步任务共享同一 GPU 锁；同步接口仍等待生成结束，忙碌或已有任务排队时返回 429。客户端断开不会取消已开始的 CUDA 推理。
+
+## 异步任务接口（推荐高峰期使用）
+
+`POST /v1/images/tasks` 使用与同步生成完全相同的请求体，完成输入校验及持久化后即返回 **202**，无需保持推理期间的 HTTP 连接。任务由单个 GPU worker 按 FIFO 顺序执行。
+
+| 方法及路径 | 功能 |
+| --- | --- |
+| `POST /v1/images/tasks` | 提交；可传 `Idempotency-Key` 防止网络重试重复生成 |
+| `GET /v1/images/tasks/{id}` | 查询 `queued / running / succeeded / failed / cancelled` |
+| `GET /v1/images/tasks/{id}/result` | 成功后取回原同步接口格式的图片结果 |
+| `DELETE /v1/images/tasks/{id}` | 取消排队中的任务；已开始推理返回 409 |
+
+四个接口均沿用 `FLUX_API_KEY` 的 Bearer 鉴权。任务状态响应不包含提示词、参考图或图片 Base64；结果独立获取。设置非空 API key 后再对业务网络开放服务。
+
+```bash
+# 同一个业务操作发生网络超时后，必须沿用同一 Idempotency-Key。
+curl --fail-with-body http://localhost:8000/v1/images/tasks \
+  -H 'Authorization: Bearer replace-with-a-long-random-secret' \
+  -H 'Idempotency-Key: example-operation-001' \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"一只猫","width":1024,"height":1024}'
+
+# 用提交响应中的 id 查询；两次 GET 都需要鉴权。
+curl 'http://localhost:8000/v1/images/tasks/<id>' \
+  -H 'Authorization: Bearer replace-with-a-long-random-secret'
+curl 'http://localhost:8000/v1/images/tasks/<id>/result' \
+  -H 'Authorization: Bearer replace-with-a-long-random-secret'
+```
+
+202 响应示意：
+
+```json
+{
+  "id": "b9471427-141b-4e59-84dc-018df173588c",
+  "status": "queued",
+  "model": "black-forest-labs/FLUX.2-klein-9B",
+  "seed": 42,
+  "created_at": "2026-10-25T00:00:00Z",
+  "updated_at": "2026-10-25T00:00:00Z",
+  "expires_at": null,
+  "error": null,
+  "result_url": null
+}
+```
+
+响应头 `Location` 给出任务查询地址，`Retry-After: 2` 建议轮询间隔。`succeeded` 时 `result_url` 给出相对结果路径。未成功任务的结果接口返回 409，未知或已过期任务返回 404。生成错误通过任务状态中的安全错误码表达。
+
+队列满或持久化记录达到上限时，提交返回 **429**，本次未受理；同键不同输入返回 **409**。同键同输入即使任务已完成或失败，也返回原任务，不重复生成。幂等映射保留至终态过期；过期后重用该键会创建新任务，因此应保存任务 ID，并为每个新业务操作分配新键。
+
+任务、请求和结果保存在 SQLite。正常重启保留结果和排队任务；异常退出时已标记 `running` 的任务恢复为 `failed / worker_interrupted`，**不自动再次生成**。模型配置改变时，旧排队任务标记 `model_changed`，防止静默切换模型。详见 [异步任务设计、客户端示例和部署要求](docs/async-tasks.md)。
 
 ## 配置
 
@@ -107,6 +157,10 @@ Path("edited.png").write_bytes(base64.b64decode(response.json()["image_base64"])
 | `FLUX_LOCAL_FILES_ONLY` | `false` | 使用已缓存模型，禁止下载 |
 | `FLUX_MAX_PIXELS` | `1048576` | 输出像素预算 |
 | `FLUX_MAX_BODY_BYTES` | `16777216` | HTTP 请求体限制 |
+| `FLUX_TASK_DATA_DIR` | `var/tasks` | SQLite 与独占锁目录；Compose 使用持久卷 `/data/tasks` |
+| `FLUX_TASK_QUEUE_CAPACITY` | `32` | 已受理的 queued + running 总数上限 |
+| `FLUX_TASK_MAX_RECORDS` | `1024` | 全部保留任务上限，须不小于队列容量 |
+| `FLUX_TASK_RETENTION_SECONDS` | `86400` | 终态结果、错误及幂等映射保留秒数，最少 60 秒 |
 
 离线部署可预先下载完整 Diffusers 权重，挂载至容器后设置 `FLUX_MODEL_ID=/models/flux-klein-9b` 和 `FLUX_LOCAL_FILES_ONLY=true`。裸 `.safetensors` 不是完整 Diffusers 目录，不能直接作为模型目录使用。
 

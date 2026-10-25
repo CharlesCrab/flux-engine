@@ -1,6 +1,7 @@
+from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,3 +18,14 @@ class Settings(BaseSettings):
     local_files_only: bool = False
     max_pixels: int = Field(default=1024 * 1024, ge=256 * 256)
     max_body_bytes: int = Field(default=16 * 1024 * 1024, ge=1024)
+    task_data_dir: Path = Path("var/tasks")
+    task_queue_capacity: int = Field(default=32, ge=1, le=1024)
+    task_max_records: int = Field(default=1024, ge=1)
+    task_retention_seconds: int = Field(default=86400, ge=60)
+
+    @model_validator(mode="after")
+    def validate_task_capacity(self):
+        """结果记录上限必须能够容纳全部在途任务。"""
+        if self.task_max_records < self.task_queue_capacity:
+            raise ValueError("task_max_records must be >= task_queue_capacity")
+        return self
